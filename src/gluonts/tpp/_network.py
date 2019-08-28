@@ -23,6 +23,24 @@ from gluonts.model.common import Tensor
 class RMTPPNetworkBase(mx.gluon.HybridBlock):
     """
     Implements the graph of a Recurrent Multivariate Temporal Point Process
+    (RMTPP), with a single hidden-layer LSTM recurrent neural network.
+
+    Parameters
+    ----------
+    num_marks
+        Number of discrete marks (correlated processes), that are available
+        in the data.
+    prediction_interval_length
+        The length of the total time interval that is in the prediction
+        range. Note that in contrast to discrete-time models in the rest
+        of GluonTS, the network is trained to predict an interval, in
+        continuous time.
+    context_interval_length
+        Length of the time interval on which the network is conditioned.
+    embedding_dim
+        Dimension of vector embeddings of marks (used only as input).
+    num_hidden_dimensions
+        Number of hidden units in the LSTM
     """
 
     def __init__(
@@ -34,24 +52,6 @@ class RMTPPNetworkBase(mx.gluon.HybridBlock):
         num_hidden_dimensions: int = 10,
         **kwargs,
     ) -> None:
-        """
-        Initialize an RMTPP Network
-
-        Parameters
-        ----------
-        num_marks
-            Number of discrete marks (correlated processes),
-        prediction_interval_length
-            Prediction and context lengths take slightly different semantics for
-            point process data. Namely, the prediction length is the length of the
-            prediction time interval
-        context_interval_length
-            Length of the time interval on which the network is conditioned
-        embedding_dim
-            Dimension of the vector embeddings of marks (used only as input)
-        num_hidden_dimensions
-            Hidden units in the LSTM
-        """
         super().__init__(**kwargs)
 
         self.num_marks = num_marks
@@ -96,7 +96,14 @@ class RMTPPTrainingNetwork(RMTPPNetworkBase):
         decay_bias: Tensor = None,
     ) -> Tensor:
         """
-        Computes the RMTPP negative log likelihood.
+        Computes the RMTPP negative log likelihood loss.
+
+        As the model is trained on past (resp. future) or context
+        (resp. prediction) "intervals" as opposed to fixed-length "sequences",
+        the number of data points available varies across observations. To
+        account for this, data is made available to the training network as a
+        "ragged" tensor. The number of valid entries in each sequence is provided
+        in a separate variable, `valid_length`.
 
         Parameters
         ----------

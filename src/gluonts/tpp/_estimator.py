@@ -11,17 +11,16 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-
 # Third-party imports
 from mxnet.gluon import HybridBlock
 
 # First-party imports
 from gluonts.core.component import validated
+from gluonts.dataset.common import Dataset
 from gluonts.model.estimator import GluonEstimator, TrainOutput
+from gluonts.model.predictor import Predictor
 from gluonts.trainer import Trainer
 from gluonts.transform import Transformation
-from gluonts.dataset.common import Dataset
-from gluonts.model.predictor import Predictor
 
 # Relative imports
 from ._network import RMTPPTrainingNetwork
