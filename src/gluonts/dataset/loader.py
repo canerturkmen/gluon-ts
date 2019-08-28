@@ -222,8 +222,11 @@ class InferenceDataLoader(DataLoader):
         Floating point type to use.
     """
 
+    def _get_buffer(self) -> BatchBuffer:
+        return BatchBuffer(self.batch_size, self.ctx, self.float_type)
+
     def __iter__(self) -> Iterator[DataBatch]:
-        buffer = BatchBuffer(self.batch_size, self.ctx, self.float_type)
+        buffer = self._get_buffer()
         for data_entry in self.transform(iter(self.dataset), is_train=False):
             buffer.add(data_entry)
             if len(buffer) >= self.batch_size:
