@@ -28,14 +28,17 @@ from gluonts.dataset.loader import (
 
 class VariableLengthBatchBuffer(BatchBuffer):
     """
-    BatchBuffer that pads when stacking
+    BatchBuffer that pads the arrays in the buffer to equal length
+    along the :code:`time_axis`. This is useful when the arrays read into
+    the buffer have variable length and cannot be stacked directly,
+    e.g., when working with continuous-time models such as point processes.
 
     Parameters
     ----------
     time_axis: int
         The dimension of component tensors that indexes the variable
-        length sequences. That is, if working with (T, C) layouts,
-        the time axis is 0. Default 0.
+        length sequences. That is, if working with input data of (T, C)
+        layouts, the time axis is 0. Default 0.
     """
 
     def __init__(self, *args, **kwargs):
@@ -84,6 +87,11 @@ class VariableLengthBatchBuffer(BatchBuffer):
 
 
 class VariableLengthTrainDataLoader(TrainDataLoader):
+    """
+    :code:`DataLoader` that works with a
+    :code:`VariableLengthBatchBuffer`.
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._buffer = VariableLengthBatchBuffer(
@@ -92,6 +100,11 @@ class VariableLengthTrainDataLoader(TrainDataLoader):
 
 
 class VariableLengthInferenceDataLoader(InferenceDataLoader):
+    """
+    :code:`InferenceDataLoader` that works with a
+    :code:`VariableLengthBatchBuffer`.
+    """
+
     def _get_buffer(self) -> BatchBuffer:
         return VariableLengthBatchBuffer(
             self.batch_size, self.ctx, self.float_type

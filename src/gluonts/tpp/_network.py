@@ -29,16 +29,16 @@ class RMTPPNetworkBase(mx.gluon.HybridBlock):
     ----------
     num_marks
         Number of discrete marks (correlated processes), that are available
-        in the data.
+        in the data
     prediction_interval_length
         The length of the total time interval that is in the prediction
         range. Note that in contrast to discrete-time models in the rest
         of GluonTS, the network is trained to predict an interval, in
         continuous time.
     context_interval_length
-        Length of the time interval on which the network is conditioned.
+        Length of the time interval on which the network is conditioned
     embedding_dim
-        Dimension of vector embeddings of marks (used only as input).
+        Dimension of vector embeddings of marks (used only as input)
     num_hidden_dimensions
         Number of hidden units in the LSTM
     """
@@ -103,7 +103,7 @@ class RMTPPTrainingNetwork(RMTPPNetworkBase):
         the number of data points available varies across observations. To
         account for this, data is made available to the training network as a
         "ragged" tensor. The number of valid entries in each sequence is provided
-        in a separate variable, `valid_length`.
+        in a separate variable, :code:`xxx_valid_length`.
 
         Parameters
         ----------

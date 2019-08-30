@@ -31,14 +31,13 @@ class ContinuousTimePointSampler:
     def __init__(self, num_instances: int) -> None:
         self.num_instances = num_instances
 
-    def __call__(self, length: float, a: float, b: float) -> np.ndarray:
+    def __call__(self, a: float, b: float) -> np.ndarray:
         """
+        Returns random points in the real interval between :code:`a` and
+        :code:`b`.
 
         Parameters
         ----------
-        length
-            The length of the interval to sample from. Must be greater than
-            b.
         a
             The lower bound (minimum value that the sampled point can take)
         b
@@ -48,7 +47,12 @@ class ContinuousTimePointSampler:
 
 
 class ContinuousTimeUniformSampler(ContinuousTimePointSampler):
-    def __call__(self, length: float, a: float, b: float) -> np.ndarray:
+    """
+    Implements a simple random sampler to sample points in the continuous
+    interval between :code:`a` and :code:`b`.
+    """
+
+    def __call__(self, a: float, b: float) -> np.ndarray:
         assert a <= b
         return np.random.rand(self.num_instances) * (b - a) + a
 
@@ -61,36 +65,26 @@ class ContinuousTimeInstanceSplitter(FlatMapTransformation):
     identifying inter-arrival times and other features (marks), as described
     in detail below.
 
-    The transformation is analogous to its discrete counterpart `InstanceSplitter`.
+    The splitter will then take random points in continuous time from each
+    given observation, and return a (variable-length) array of points in
+    the past (context) and the future (prediction) intervals.
 
-    - Does not allow "incomplete" records. These cause problems in TPP.
-    - Works on intervals
-    - Outputs a certain layout (NTC)
+    The transformation is analogous to its discrete counterpart
+    `InstanceSplitter` except that
+
+    - It does not allow "incomplete" records. That is, the past and future
+      intervals sampled are always complete
+    - Outputs a (T, C) layout.
     - Does not accept time-series fields as these would typically not be
       available in TPP data.
 
-    Selects training instances, by slicing the target and other time series
-    like arrays at random points in training mode or at the last time point in
-    prediction mode. Assumption is that all time like arrays start at the same
-    time point.
-
-    The target and each time_series_field is removed and instead two
-    corresponding fields with prefix `past_` and `future_` are included. E.g.
-
-    If the target array is one-dimensional, the resulting instance has shape
-    (len_target). In the multi-dimensional case, the instance has shape (dim,
-    len_target).
-
-    target -> past_target and future_target
-
-    The transformation also adds a field 'past_is_pad' that indicates whether
-    values where padded or not.
-
-    Convention: time axis is always the last axis.
+    The target arrays are expected to have (2, T) layout where the first axis
+    corresponds to the (i) interarrival times between consecutive points, in
+    order and (ii) integer identifiers of marks (from {0, 1, ..., :code:`num_marks`}).
+    The returned arrays will have (T, 2) layout.
 
     Parameters
     ----------
-
     past_interval_length
         length of the interval seen before making prediction
     future_interval_length
@@ -107,7 +101,6 @@ class ContinuousTimeInstanceSplitter(FlatMapTransformation):
         output field that will contain the time point where the forecast starts
     """
 
-    # @validated()
     def __init__(
         self,
         past_interval_length: float,
@@ -153,7 +146,6 @@ class ContinuousTimeInstanceSplitter(FlatMapTransformation):
                 sampling_times: np.ndarray = np.array([])
             else:
                 sampling_times = self.train_sampler(
-                    total_interval_length,
                     self.past_interval_length,
                     total_interval_length - self.future_interval_length,
                 )

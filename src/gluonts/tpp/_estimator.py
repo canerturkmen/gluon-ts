@@ -23,8 +23,8 @@ from gluonts.trainer import Trainer
 from gluonts.transform import Transformation
 
 # Relative imports
-from ._network import RMTPPTrainingNetwork
 from ._loader import VariableLengthTrainDataLoader
+from ._network import RMTPPTrainingNetwork
 from ._transform import (
     ContinuousTimeUniformSampler,
     ContinuousTimeInstanceSplitter,
@@ -37,10 +37,45 @@ class RMTPPEstimator(GluonEstimator):
     where the conditional intensity function and the mark distribution are
     specified by a recurrent neural network, as described in [Duetal2016]_.
 
+    The model works on a multivariate temporal point process, i.e., the "points"
+    take integer marks that index a finite set. RMTPP parameterizes the conditional
+    intensity function for the next mark via a single hidden-layer LSTM, which
+    takes the interarrival time since, and a vector embedding for the mark of,
+    the previous point.
+
     .. [Duetal2016] Du, N., Dai, H., Trivedi, R., Upadhyay, U., Gomez-Rodriguez, M.,
         & Song, L. (2016, August). Recurrent marked temporal point processes: Embedding
         event history to vector. In Proceedings of the 22nd ACM SIGKDD International
         Conference on Knowledge Discovery and Data Mining (pp. 1555-1564). ACM.
+
+    Parameters
+    ----------
+    prediction_interval_length
+        The length of the interval (in continuous time) that the estimator will be
+        trained to predict.
+
+        This argument is akin to the :code:`prediction_length` parameter for
+        discrete time estimators. However, instead of working on a fixed number of
+        time steps before the forecast start time, point process Estimators work on
+        a fixed-length "interval" which can contain a variable number of points.
+    context_interval_length
+        The length of the interval on which the point process is conditioned.
+    num_marks
+        The number of marks (disctinct processes), i.e., the cardinality of the
+        mark set.
+    embedding_dim
+        The dimension of vector embeddings for marks (used as input to the LSTM).
+    trainer
+        :code:`gluonts.trainer.Trainer` object which will be used to train the
+        estimator. Note that :code:`Trainer(hybridize=False)` must be set as
+        :code:`RMTPPEstimator` currently does not support hybridization.
+    num_hidden_dimensions
+        Number of hidden units in the (single) hidden layer of the LSTM.
+    num_parallel_samples
+        The number of samples returned by the :code:`Predictor` learned.
+    num_training_instances
+        The number of training instances to be sampled from each entry in the
+        data set provided during training.
     """
 
     @validated()
@@ -114,10 +149,13 @@ class RMTPPEstimator(GluonEstimator):
         return Predictor(0, "H")  # todo: update after implementing
 
     def train_model(self, training_data: Dataset) -> TrainOutput:
-        # we have to override the `train_model` method here
+        # fixme: do not duplicate code!
         transformation = self.create_transformation()
 
         transformation.estimate(iter(training_data))
+
+        # we have to override the `train_model` method here
+        # to use the correct data loader
 
         training_data_loader = VariableLengthTrainDataLoader(
             dataset=training_data,
@@ -128,8 +166,6 @@ class RMTPPEstimator(GluonEstimator):
             float_type=self.float_type,
         )
 
-        # ensure that the training network is created within the same MXNet
-        # context as the one that will be used during training
         with self.trainer.ctx:
             trained_net = self.create_training_network()
 
