@@ -19,12 +19,14 @@ import mxnet as mx
 
 # First-party imports
 from gluonts.dataset.common import ListDataset
+from gluonts.model.predictor import Predictor
 from gluonts.tpp._estimator import RMTPPEstimator
 from gluonts.tpp._loader import VariableLengthTrainDataLoader
 from gluonts.tpp._transform import (
     ContinuousTimeInstanceSplitter,
     ContinuousTimeUniformSampler,
 )
+from gluonts.trainer import Trainer
 
 
 @pytest.fixture()
@@ -102,3 +104,20 @@ def test_train(lds):
     z = estimator.train(lds)
 
     assert z is None
+
+
+def test_predictor(lds):
+
+    estimator = RMTPPEstimator(
+        prediction_interval_length=24,
+        context_interval_length=24 * 5,
+        num_marks=10,
+        embedding_dim=3,
+        trainer=Trainer(epochs=5, num_batches_per_epoch=10, hybridize=False),
+    )
+
+    np.random.seed(1234)
+
+    z = estimator.train(lds)
+
+    assert isinstance(z, Predictor)

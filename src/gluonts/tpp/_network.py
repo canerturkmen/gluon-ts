@@ -11,8 +11,12 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+# Standard library imports
+from typing import Tuple, List
+
 # Third-party imports
 import mxnet as mx
+from mxnet import nd
 
 # First-party imports
 from gluonts.core.component import validated
@@ -277,7 +281,7 @@ class RMTPPPredictionNetwork(RMTPPNetworkBase):
         past_target: Tensor,
         past_valid_length: Tensor,
         decay_bias: Tensor = None,
-    ) -> Tensor:
+    ) -> Tuple[Tensor, Tensor]:
         """
         Draw forward samples from the RMTPP model via the thinning algorithm,
         a.k.a. Ogata's thinning sampler.
@@ -287,14 +291,151 @@ class RMTPPPredictionNetwork(RMTPPNetworkBase):
         F
         past_target
             Tensor with past observations.
-            Shape: (batch_size, context_length, target_dim).
+            Shape: (batch_size, context_length, target_dim). Has to comply
+            with :code:`self.context_interval_length`.
         past_valid_length
             The `valid_length` or number of valid entries in the past_target
             Tensor. Shape: (batch_size,)
 
         Returns
         -------
-        Tensor
-            Prediction sample. Shape: (samples, batch_size, prediction_length).
+        samples: Tensor
+            Prediction sample.
+            Shape: (samples, batch_size, max_prediction_length, target_dim).
+        samples_valid_length: Tensor
+            The number of valid entries in the time axis of each sample.
+            Shape (samples, batch_size)
         """
-        pass
+        if F is mx.sym:
+            raise ValueError(
+                "The RMTPP model currently doesn't support hybridization."
+            )
+
+        beta = -F.Activation(decay_bias, "softrelu")
+        ctx = beta.context
+
+        max_time = nd.array([self.prediction_interval_length], ctx=ctx)
+        time_samples: List[nd.NDArray] = []
+        mark_samples: List[nd.NDArray] = []
+        masks: List[nd.NDArray] = []
+
+        # condition the prediction network on the past
+
+        num_observations = past_target.shape[1]
+
+        past_ia_times, past_marks = F.split(
+            past_target, num_outputs=2, axis=-1
+        )
+        past_valid_length = past_valid_length.reshape(-1).astype(
+            past_ia_times.dtype
+        )
+
+        # condition the model on the past
+        _, lstm_cond_state = self.lstm.unroll(
+            length=num_observations,
+            inputs=F.concat(  # lstm input
+                past_ia_times, self.embedding(past_marks.sum(-1)), dim=-1
+            ),
+            layout="NTC",
+            merge_outputs=True,
+            valid_length=past_valid_length,
+        )
+
+        cond_time_last = F.SequenceMask(
+            data=past_ia_times,
+            sequence_length=past_valid_length,
+            axis=1,
+            use_sequence_length=True,
+        ).sum(1)
+
+        cond_time_remaining = (
+            F.ones_like(cond_time_last) * self.context_interval_length
+            - cond_time_last
+        ).expand_dims(-1)
+
+        # duplicate the LSTM states and the times by the number of
+        # samples required
+
+        sample_dim_size = self.num_parallel_samples * num_observations
+
+        # lstm_out, lstm_mem = state
+
+        time, tau = (
+            nd.zeros(sample_dim_size, ctx=ctx),
+            nd.zeros(sample_dim_size, ctx=ctx),
+        )
+
+        # FIXME: temporary hack
+        return time, tau
+
+        #
+        # while nd.sum(time < max_time) > 0:
+        #
+        #     # propose the next points
+        #     log_int_beginning = self.block.mtpp_ground(lstm_out)
+        #     lda_proposal = nd.exp(log_int_beginning).reshape(-1)
+        #
+        #     tau = nd.random.exponential(
+        #         scale=1. / lda_proposal, ctx=ctx
+        #     )  # draw the proposed next point, (N,)
+        #
+        #     # compute the intensity in the proposed points, for all marks
+        #     log_mark_prob = nd.log_softmax(self.block.mtpp_mark(lstm_out))
+        #
+        #     all_intensities = nd.sum(
+        #         nd.exp(
+        #             log_int_beginning
+        #             + nd.expand_dims(beta * tau, 1).tile(
+        #                 (1, 1, self.block.num_marks)
+        #             )
+        #             + log_mark_prob
+        #         ),
+        #         0,
+        #     )
+        #
+        #     p = all_intensities / nd.expand_dims(
+        #         all_intensities.sum(-1), -1
+        #     )  # distributions for next points
+        #     m = nd.random.multinomial(p, dtype="float32")  # sample the marks
+        #
+        #     # advance the time
+        #     time += tau
+        #     tau += tau
+        #
+        #     # accept-reject
+        #     u = nd.random.uniform(shape=(batch_size,), ctx=ctx)
+        #     accept = (u < all_intensities.sum(-1) / lda_proposal) * (
+        #         time < max_time
+        #     )
+        #
+        #     # append samples
+        #     time_samples.append(time * accept)
+        #     mark_samples.append(m * accept)
+        #     masks.append(accept)
+        #
+        #     # advance the lstm
+        #     lstm_in = nd.concat(
+        #         tau.reshape((batch_size, 1)), self.block.embedding(m), dim=1
+        #     )
+        #
+        #     _, (tmp_lstm_out, tmp_lstm_mem) = self.block.lstm(
+        #         lstm_in, (lstm_out, lstm_mem)
+        #     )
+        #
+        #     lstm_out = nd.where(accept, tmp_lstm_out, lstm_out)
+        #     lstm_mem = nd.where(accept, tmp_lstm_mem, lstm_mem)
+        #
+        #     # set tau to zero for accepted
+        #     tau *= 1 - accept
+        #
+        # ia_times_out, marks_out, valid_length = _realign_masked_samples(
+        #     nd.stack(*time_samples, axis=1),
+        #     nd.stack(*mark_samples, axis=1),
+        #     nd.stack(*masks, axis=1),
+        # )
+        #
+        # return (
+        #     ia_times_out.swapaxes(0, 1),
+        #     marks_out.swapaxes(0, 1),
+        #     valid_length,
+        # )

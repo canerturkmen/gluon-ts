@@ -18,13 +18,13 @@ from mxnet.gluon import HybridBlock
 from gluonts.core.component import validated
 from gluonts.dataset.common import Dataset
 from gluonts.model.estimator import GluonEstimator, TrainOutput
-from gluonts.model.predictor import Predictor
+from gluonts.model.predictor import RepresentableBlockPredictor, Predictor
 from gluonts.trainer import Trainer
 from gluonts.transform import Transformation
 
 # Relative imports
 from ._loader import VariableLengthTrainDataLoader
-from ._network import RMTPPTrainingNetwork
+from ._network import RMTPPTrainingNetwork, RMTPPPredictionNetwork
 from ._transform import (
     ContinuousTimeUniformSampler,
     ContinuousTimeInstanceSplitter,
@@ -76,6 +76,9 @@ class RMTPPEstimator(GluonEstimator):
     num_training_instances
         The number of training instances to be sampled from each entry in the
         data set provided during training.
+    freq
+        Similar to the :code:`freq` of discrete-time models, specifies the time
+        unit by which interarrival times are given.
     """
 
     @validated()
@@ -89,6 +92,7 @@ class RMTPPEstimator(GluonEstimator):
         num_hidden_dimensions: int = 10,
         num_parallel_samples: int = 100,
         num_training_instances: int = 100,
+        freq: str = "H",
     ) -> None:
         assert (
             not trainer.hybridize
@@ -124,6 +128,7 @@ class RMTPPEstimator(GluonEstimator):
         self.embedding_dim = embedding_dim
         self.num_parallel_samples = num_parallel_samples
         self.num_training_instances = num_training_instances
+        self.freq = freq
 
     def create_training_network(self) -> HybridBlock:
         return RMTPPTrainingNetwork(
@@ -146,10 +151,31 @@ class RMTPPEstimator(GluonEstimator):
     def create_predictor(
         self, transformation: Transformation, trained_network: HybridBlock
     ) -> Predictor:
-        return Predictor(0, "H")  # todo: update after implementing
+        trained_params = trained_network.collect_params()
+
+        del trained_network.collect_params().get("decay_bias").init
+
+        prediction_network = RMTPPPredictionNetwork(
+            num_marks=self.num_marks,
+            prediction_interval_length=self.prediction_interval_length,
+            context_interval_length=self.context_interval_length,
+            embedding_dim=self.embedding_dim,
+            num_hidden_dimensions=self.num_hidden_dimensions,
+            params=trained_network.collect_params(),
+            num_parallel_samples=self.num_parallel_samples,
+        )
+
+        return RepresentableBlockPredictor(
+            input_transform=transformation,
+            prediction_net=prediction_network,
+            batch_size=self.trainer.batch_size,
+            freq=self.freq,
+            prediction_length=self.prediction_length,
+            ctx=self.trainer.ctx,
+        )
 
     def train_model(self, training_data: Dataset) -> TrainOutput:
-        # fixme: do not duplicate code!
+        # fixme: duplicate code with `super().train_model()`
         transformation = self.create_transformation()
 
         transformation.estimate(iter(training_data))
