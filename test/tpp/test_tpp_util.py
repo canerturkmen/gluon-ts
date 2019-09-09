@@ -31,7 +31,7 @@ from gluonts.trainer import Trainer
 
 @pytest.fixture()
 def lds():
-
+    # FIXME: include data fixture?
     df = pd.read_pickle("~/code/data/ncedc/ncedc.pkl")
 
     ia_times = np.diff(df["dt"]).astype(float) / (60 * 60 * 1e9)
@@ -113,11 +113,12 @@ def test_predictor(lds):
         context_interval_length=24 * 5,
         num_marks=10,
         embedding_dim=3,
-        trainer=Trainer(epochs=5, num_batches_per_epoch=10, hybridize=False),
+        trainer=Trainer(epochs=2, num_batches_per_epoch=10, hybridize=False),
     )
 
     np.random.seed(1234)
 
     z = estimator.train(lds)
 
-    assert isinstance(z, Predictor)
+    fc1 = next(iter(z.predict(lds, num_eval_samples=100)))
+    # assert isinstance(z, Predictor)

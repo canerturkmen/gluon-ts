@@ -83,7 +83,16 @@ class VariableLengthBatchBuffer(BatchBuffer):
     def stack(self, xs):
         if not self._is_equal_length(xs):
             xs = self._pad_arrays(xs)
-        return super().stack(xs)
+        stacked = super().stack(xs)
+
+        if isinstance(stacked, mx.nd.NDArray) and stacked.shape[1] == 0:
+            in_shape = list(stacked.shape)
+            in_shape[1] = 1
+
+            # noinspection PyTypeChecker
+            return mx.nd.zeros(shape=in_shape)
+        else:
+            return stacked
 
 
 class VariableLengthTrainDataLoader(TrainDataLoader):

@@ -86,6 +86,12 @@ class RMTPPNetworkBase(mx.gluon.HybridBlock):
                 num_marks, in_units=num_hidden_dimensions, flatten=False
             )
 
+    def hybridize(self, active=True, **kwargs):
+        if active:
+            raise NotImplementedError(
+                "RMTPP blocks do not support hybridization"
+            )
+
 
 class RMTPPTrainingNetwork(RMTPPNetworkBase):
 
@@ -314,9 +320,17 @@ class RMTPPPredictionNetwork(RMTPPNetworkBase):
         beta = -F.Activation(decay_bias, "softrelu")
         ctx = beta.context
 
+        batch_size = past_target.shape[0]
+        assert (
+            past_target.shape[-1] == 2
+        ), "RMTPP data should have two target_dim, interarrival times and marks"
+
+        sample_dim_size = batch_size * self.num_parallel_samples
+
         max_time = nd.array([self.prediction_interval_length], ctx=ctx)
         time_samples: List[nd.NDArray] = []
         mark_samples: List[nd.NDArray] = []
+        # noinspection PyTypeChecker
         masks: List[nd.NDArray] = []
 
         # condition the prediction network on the past
@@ -358,76 +372,75 @@ class RMTPPPredictionNetwork(RMTPPNetworkBase):
 
         sample_dim_size = self.num_parallel_samples * num_observations
 
-        # lstm_out, lstm_mem = state
+        lstm_out, lstm_mem = lstm_cond_state  # (N, T), (N, T)
 
         time, tau = (
             nd.zeros(sample_dim_size, ctx=ctx),
             nd.zeros(sample_dim_size, ctx=ctx),
         )
 
-        # FIXME: temporary hack
-        return time, tau
+        while nd.sum(time < max_time) > 0:
 
-        #
-        # while nd.sum(time < max_time) > 0:
-        #
-        #     # propose the next points
-        #     log_int_beginning = self.block.mtpp_ground(lstm_out)
-        #     lda_proposal = nd.exp(log_int_beginning).reshape(-1)
-        #
-        #     tau = nd.random.exponential(
-        #         scale=1. / lda_proposal, ctx=ctx
-        #     )  # draw the proposed next point, (N,)
-        #
-        #     # compute the intensity in the proposed points, for all marks
-        #     log_mark_prob = nd.log_softmax(self.block.mtpp_mark(lstm_out))
-        #
-        #     all_intensities = nd.sum(
-        #         nd.exp(
-        #             log_int_beginning
-        #             + nd.expand_dims(beta * tau, 1).tile(
-        #                 (1, 1, self.block.num_marks)
-        #             )
-        #             + log_mark_prob
-        #         ),
-        #         0,
-        #     )
-        #
-        #     p = all_intensities / nd.expand_dims(
-        #         all_intensities.sum(-1), -1
-        #     )  # distributions for next points
-        #     m = nd.random.multinomial(p, dtype="float32")  # sample the marks
-        #
-        #     # advance the time
-        #     time += tau
-        #     tau += tau
-        #
-        #     # accept-reject
-        #     u = nd.random.uniform(shape=(batch_size,), ctx=ctx)
-        #     accept = (u < all_intensities.sum(-1) / lda_proposal) * (
-        #         time < max_time
-        #     )
-        #
-        #     # append samples
-        #     time_samples.append(time * accept)
-        #     mark_samples.append(m * accept)
-        #     masks.append(accept)
-        #
-        #     # advance the lstm
-        #     lstm_in = nd.concat(
-        #         tau.reshape((batch_size, 1)), self.block.embedding(m), dim=1
-        #     )
-        #
-        #     _, (tmp_lstm_out, tmp_lstm_mem) = self.block.lstm(
-        #         lstm_in, (lstm_out, lstm_mem)
-        #     )
-        #
-        #     lstm_out = nd.where(accept, tmp_lstm_out, lstm_out)
-        #     lstm_mem = nd.where(accept, tmp_lstm_mem, lstm_mem)
-        #
-        #     # set tau to zero for accepted
-        #     tau *= 1 - accept
-        #
+            # propose the next points
+            log_int_beginning = self.mtpp_ground(lstm_out)
+            lda_proposal = nd.exp(log_int_beginning).reshape(-1)
+
+            tau = nd.random.exponential(
+                scale=1.0 / lda_proposal, ctx=ctx
+            )  # draw the proposed next point, (N,)
+
+            # compute the intensity in the proposed points, for all marks
+            log_mark_prob = nd.log_softmax(self.mtpp_mark(lstm_out))
+
+            all_intensities = nd.sum(
+                nd.exp(
+                    log_int_beginning
+                    + nd.expand_dims(beta * tau, 1).tile(
+                        (1, 1, self.num_marks)
+                    )
+                    + log_mark_prob
+                ),
+                0,
+            )
+
+            p = all_intensities / nd.expand_dims(
+                all_intensities.sum(-1), -1
+            )  # distributions for next points
+            m = nd.random.multinomial(p, dtype="float32")  # sample the marks
+
+            # advance the time
+            time += tau
+            tau += tau
+
+            # accept-reject
+            u = nd.random.uniform(shape=(sample_dim_size,), ctx=ctx)
+            accept = (u < all_intensities.sum(-1) / lda_proposal) * (
+                time < max_time
+            )
+
+            # append samples
+            time_samples.append(time * accept)
+            mark_samples.append(m * accept)
+            # noinspection PyTypeChecker
+            masks.append(accept)
+
+            # advance the lstm
+            lstm_in = nd.concat(
+                tau.reshape((sample_dim_size, 1)), self.embedding(m), dim=1
+            )
+
+            _, (tmp_lstm_out, tmp_lstm_mem) = self.lstm(
+                lstm_in, (lstm_out, lstm_mem)
+            )
+
+            lstm_out = nd.where(accept, tmp_lstm_out, lstm_out)
+            lstm_mem = nd.where(accept, tmp_lstm_mem, lstm_mem)
+
+            # set tau to zero for accepted
+            tau *= 1 - accept
+
+        # FIXME: temp type checker workaround
+        return time, tau
         # ia_times_out, marks_out, valid_length = _realign_masked_samples(
         #     nd.stack(*time_samples, axis=1),
         #     nd.stack(*mark_samples, axis=1),
@@ -435,7 +448,10 @@ class RMTPPPredictionNetwork(RMTPPNetworkBase):
         # )
         #
         # return (
-        #     ia_times_out.swapaxes(0, 1),
-        #     marks_out.swapaxes(0, 1),
+        #     nd.stack(
+        #         ia_times_out.swapaxes(0, 1),
+        #         marks_out.swapaxes(0, 1),
+        #         axis=-1
+        #     ),
         #     valid_length,
         # )

@@ -11,6 +11,44 @@ from pandas import to_timedelta
 
 
 class PointProcessSampleForecast(Forecast):
+    """
+    Sample forecast object used for temporal point process inference.
+    Differs from standard forecast objects as it does not implement
+    fixed length samples. Each sample has a variable length, that is
+    kept in a separate :code:`valid_length` attribute.
+
+    Importantly, PointProcessSampleForecast does not implement some
+    methods (such as :code:`quantile` or :code:`plot`) that are available
+    in discrete time forecasts.
+
+    Parameters
+    ----------
+    samples
+        A multidimensional array of samples, of shape
+        (number_of_samples, max_pred_length, target_dim) or
+        (number_of_samples, max_pred_length). For marked TPP, the
+        target_dim is 2 with the first element keeping interarrival times
+        and the latter marks. If samples are two-dimensional, each entry
+        stands for the interarrival times in a (unmarked) TPP sample.
+    valid_length
+        An array of integers denoting the valid lengths of each sample
+        in :code:`samples`. That is, :code:`valid_length[0] == 2` implies
+        that only the first two entries of :code:`samples[0, ...]` are
+        valid "points".
+    start_date
+        Starting timestamp of the sample
+    freq
+        The time unit of interarrival times
+    prediction_interval_length
+        The length of the prediction interval for which samples were drawn.
+    end_date
+        Optionally, the end timestamp of the sample. If not given, computed
+        from start_date, prediction_interval_length and freq.
+    item_id
+        Item ID, if available.
+    info
+        Optional dictionary of additional information.
+    """
 
     prediction_length = cast(int, None)  # not used
     prediction_interval_length: float
@@ -22,7 +60,7 @@ class PointProcessSampleForecast(Forecast):
     def __init__(
         self,
         samples,
-        valid_lengths,
+        valid_length,
         start_date: pd.Timestamp,
         freq: str,
         prediction_interval_length: float,
@@ -43,18 +81,18 @@ class PointProcessSampleForecast(Forecast):
         )
 
         assert isinstance(
-            valid_lengths, (np.ndarray, mx.ndarray.ndarray.NDArray)
+            valid_length, (np.ndarray, mx.ndarray.ndarray.NDArray)
         ), "samples should be either a numpy or an mxnet array"
         assert (
-            len(valid_lengths.shape) == 1
-        ), "valid_lengths should be a 1-dimensional array"
+            len(valid_length.shape) == 1
+        ), "valid_length should be a 1-dimensional array"
         assert (
-            valid_lengths.shape[0] == samples.shape[0]
-        ), "valid_lengths and samples should have compatible dimensions"
-        self.valid_lengths = (
-            valid_lengths
-            if (isinstance(valid_lengths, np.ndarray))
-            else valid_lengths.asnumpy()
+            valid_length.shape[0] == samples.shape[0]
+        ), "valid_length and samples should have compatible dimensions"
+        self.valid_length = (
+            valid_length
+            if (isinstance(valid_length, np.ndarray))
+            else valid_length.asnumpy()
         )
 
         self._dim = len(np.shape(samples))
@@ -101,7 +139,7 @@ class PointProcessSampleForecast(Forecast):
 
         if OutputType.samples in config.output_types:
             result["samples"] = self.samples.tolist()
-            result["valid_lengths"] = self.valid_lengths.tolist()
+            result["valid_length"] = self.valid_length.tolist()
 
         return result
 
@@ -109,7 +147,7 @@ class PointProcessSampleForecast(Forecast):
         return ", ".join(
             [
                 f"PointProcessSampleForecast({self.samples!r})",
-                f"{self.valid_lengths!r}",
+                f"{self.valid_length!r}",
                 f"{self.start_date!r}",
                 f"{self.end_date!r}",
                 f"{self.freq!r}",

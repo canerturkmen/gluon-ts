@@ -18,11 +18,12 @@ from mxnet.gluon import HybridBlock
 from gluonts.core.component import validated
 from gluonts.dataset.common import Dataset
 from gluonts.model.estimator import GluonEstimator, TrainOutput
-from gluonts.model.predictor import RepresentableBlockPredictor, Predictor
+from gluonts.model.predictor import Predictor
 from gluonts.trainer import Trainer
 from gluonts.transform import Transformation
 
 # Relative imports
+from ._predictor import PointProcessGluonPredictor
 from ._loader import VariableLengthTrainDataLoader
 from ._network import RMTPPTrainingNetwork, RMTPPPredictionNetwork
 from ._transform import (
@@ -165,13 +166,14 @@ class RMTPPEstimator(GluonEstimator):
             num_parallel_samples=self.num_parallel_samples,
         )
 
-        return RepresentableBlockPredictor(
-            input_transform=transformation,
+        return PointProcessGluonPredictor(
+            input_names=["past_target", "past_valid_length"],
             prediction_net=prediction_network,
             batch_size=self.trainer.batch_size,
+            prediction_interval_length=self.prediction_interval_length,
             freq=self.freq,
-            prediction_length=self.prediction_length,
             ctx=self.trainer.ctx,
+            input_transform=transformation,
         )
 
     def train_model(self, training_data: Dataset) -> TrainOutput:

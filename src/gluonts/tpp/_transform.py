@@ -179,33 +179,38 @@ class ContinuousTimeInstanceSplitter(FlatMapTransformation):
             future_end = future_start + self.future_interval_length
 
             assert past_start >= 0
-            assert future_end <= total_interval_length
 
             past_mask = self._mask_sorted(ts, past_start, future_start)
-            future_mask = self._mask_sorted(ts, future_start, future_end)
 
             past_ia_times = np.diff(np.r_[0, ts[past_mask] - past_start])[
                 np.newaxis
             ]  # expand_dims(axis=0)
-            future_ia_times = np.diff(
-                np.r_[0, ts[future_mask] - future_start]
-            )[np.newaxis]
 
             r[f"past_{self.target_field}"] = np.concatenate(
                 [past_ia_times, marks[:, past_mask]], axis=0
             ).transpose()
 
-            r[f"future_{self.target_field}"] = np.concatenate(
-                [future_ia_times, marks[:, future_mask]], axis=0
-            ).transpose()
-
             r["past_valid_length"] = np.array([len(past_mask)])
-            r["future_valid_length"] = np.array([len(future_mask)])
 
             r[self.forecast_start_field] = (
                 d[self.start_field]
                 + d[self.start_field].freq.delta * future_start
             )
+
+            if is_train:  # include the future only if is_train
+                assert future_end <= total_interval_length
+
+                future_mask = self._mask_sorted(ts, future_start, future_end)
+
+                future_ia_times = np.diff(
+                    np.r_[0, ts[future_mask] - future_start]
+                )[np.newaxis]
+
+                r[f"future_{self.target_field}"] = np.concatenate(
+                    [future_ia_times, marks[:, future_mask]], axis=0
+                ).transpose()
+
+                r["future_valid_length"] = np.array([len(future_mask)])
 
             # include other fields
             r.update(keep_cols.copy())

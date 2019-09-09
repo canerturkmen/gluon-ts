@@ -15,6 +15,9 @@
 import pytest
 import mxnet as mx
 import numpy as np
+from gluonts.model.predictor import Predictor
+from gluonts.tpp import RMTPPEstimator
+from gluonts.trainer import Trainer
 from mxnet import nd
 
 # First-party imports
@@ -55,30 +58,13 @@ def test_log_likelihood():
 def test_rmtpp_disallows_hybrid():
     mx.rnd.seed(seed_state=1234)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(NotImplementedError):
         smodel = RMTPPTrainingNetwork(
             num_marks=3,
             prediction_interval_length=2,
             context_interval_length=1,
         )
         smodel.hybridize()
-
-        smodel.collect_params().initialize()
-
-        past_lags = nd.array([[0.1, 0.2, 0.1, 0.12], [0.3, 0.15, 0.1, 0.12]])
-        past_marks = nd.array([[1, 2, 0, 2], [0, 0, 1, 2]])
-        past_valid_length = nd.array([3, 4])
-
-        future_lags = nd.array([[0.8, 0.1, 0.1, 0.12], [0.4, 0.25, 0.1, 0.12]])
-        future_marks = nd.array([[2, 2, 2, 2], [0, 0, 1, 2]])
-        future_valid_length = nd.array([3, 4])
-
-        smodel(
-            nd.stack(past_lags, past_marks, axis=-1),
-            nd.stack(future_lags, future_marks, axis=-1),
-            past_valid_length,
-            future_valid_length,
-        )
 
 
 #

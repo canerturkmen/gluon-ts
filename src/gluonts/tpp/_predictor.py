@@ -12,12 +12,36 @@ from gluonts.dataset.common import Dataset
 from gluonts.dataset.loader import DataBatch
 from gluonts.model.forecast import Forecast
 from gluonts.model.predictor import GluonPredictor, SymbolBlockPredictor
-from gluonts.tpp import VariableLengthInferenceDataLoader
-from gluonts.tpp._forecast import PointProcessSampleForecast
 from gluonts.transform import Transformation, FieldName
+
+# Relative imports
+from ._loader import VariableLengthInferenceDataLoader
+from ._forecast import PointProcessSampleForecast
 
 
 class PointProcessGluonPredictor(GluonPredictor):
+    """
+    Predictor object for marked temporal point process models.
+
+    TPP predictions differ from standard discrete-time models in several
+    regards. First, at least for now, only sample forecasts implementing
+    PointProcessSampleForecast are available. Similar to TPP Estimator
+    objects, the Predictor works with :code:`prediction_interval_length`
+    as opposed to :code:`prediction_length`.
+
+    The predictor also accounts for the fact that the prediction network
+    outputs a 2-tuple of Tensors, for the samples themselves and their
+    `valid_length`.
+
+    Finally, this class uses a VariableLengthInferenceDataLoader as opposed
+    to the default InferenceDataLoader.
+
+    Parameters
+    ----------
+    prediction_interval_length
+        The length of the prediction interval
+    """
+
     def __init__(
         self,
         input_names: List[str],
@@ -40,7 +64,7 @@ class PointProcessGluonPredictor(GluonPredictor):
             input_transform,
             None,  # no output transform
             float_type,
-            "ContinuousTimeSampleForecast",
+            "PointProcessSampleForecast",
             forecast_kwargs,
         )
 
@@ -74,44 +98,46 @@ class PointProcessGluonPredictor(GluonPredictor):
             float_type=self.float_type,
         )
 
+        if not num_eval_samples:
+            num_eval_samples = self.prediction_net.num_parallel_samples
+
         for batch in inference_data_loader:
             inputs = [batch[k] for k in self.input_names]
 
-            # todo: tuple output
-            outputs = self.prediction_net(*inputs).asnumpy()
+            outputs, valid_length = (
+                x.asnumpy() for x in self.prediction_net(*inputs)
+            )
 
-            # todo: delete me
-            # `outputs` is a numpy array of shape (N, S, T)
-
-            # sample until enough point process trajectories are
-            # collected
+            # sample until enough point process trajectories are collected
             num_collected_samples = outputs[0].shape[0]
-            collected_samples = [outputs]
+            collected_samples, collected_vls = [outputs], [valid_length]
             while num_collected_samples < num_eval_samples:
-                outputs = self.prediction_net(*inputs).asnumpy()
+                outputs, valid_length = (
+                    x.asnumpy() for x in self.prediction_net(*inputs)
+                )
 
                 collected_samples.append(outputs)
+                collected_vls.append(valid_length)
+
                 num_collected_samples += outputs[0].shape[0]
 
             outputs = [
                 np.concatenate(s)[:num_eval_samples]
                 for s in zip(*collected_samples)
             ]
+            valid_length = [
+                np.concatenate(s)[:num_eval_samples]
+                for s in zip(*collected_vls)
+            ]
+
             assert len(outputs[0]) == num_eval_samples
+            assert len(valid_length[0]) == num_eval_samples
             assert len(batch[FieldName.FORECAST_START]) == len(outputs)
 
-            # todo: delete me
-            # here, it's expected that dim 0 is the sample axis in each output
-            # batch. outputs is a python list of output tuples for each
-            # item in the batch. each item contains the first element in the
-            # tuple which contains the samples along its first dimension.
-
             for i, output in enumerate(outputs):
-                # FIXME: 2 outputs!
-
                 yield PointProcessSampleForecast(
-                    output[0],
-                    valid_lengths=output[1],
+                    output,
+                    valid_length=valid_length[i],
                     start_date=batch[FieldName.FORECAST_START][i],
                     freq=self.freq,
                     prediction_interval_length=self.prediction_interval_length,
