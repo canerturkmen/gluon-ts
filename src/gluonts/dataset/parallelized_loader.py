@@ -98,29 +98,65 @@ def _is_stackable(
     return True
 
 
+def _nd_pad_array(data, max_length):
+    """
+    Pad a 1-D or 2-D array along the first dimension.
+    """
+    assert (
+        0 < data.ndim <= 2
+    ), "Padding only supports 1 or 2 dimensional arrays"
+    assert (
+        data.ndim == 1 or data.shape[1] > 0
+    ), "The second dimension of 2D arrays cannot be of size 0."
+    assert max_length > 0
+
+    # if the padding dimension is zero we replace it with at
+    # least one for mxnet to behave consistently
+    if data.shape[0] == 0:
+        replace_shape = list(data.shape)
+        replace_shape[0] = 1
+        data = nd.zeros(shape=tuple(replace_shape), ctx=data.context)
+
+    # from: https://mxnet.apache.org/versions/1.4.1/tutorials/gluon
+    # /gotchas_numpy_in_mxnet.html
+    # expand dimensions to because nd.pad can work only with 4 or 5 dims
+    data_expanded = data.reshape((1, 1, 1) + data.shape)
+
+    # 0 pad for each of the first 3 dummy dimensions,
+    # right padding for the 4th dimension
+    pad_width = [0] * 6 + [0, max_length - data.shape[0]]
+    if data.ndim == 2:
+        pad_width += [0, 0]
+
+    data_padded = nd.pad(
+        data_expanded, mode="constant", pad_width=pad_width, constant_value=0,
+    )
+
+    # reshape back
+    new_shape = list(data.shape)
+    new_shape[0] = max_length
+    return data_padded.reshape(new_shape)
+
+
 def _pad_arrays(
     data: List[Union[np.ndarray, mx.nd.NDArray]], pad_axis: int = 0,
 ) -> List[Union[np.ndarray, mx.nd.NDArray]]:
     assert isinstance(data[0], (np.ndarray, mx.nd.NDArray))
-    is_mx = isinstance(data[0], mx.nd.NDArray)
 
-    # MxNet causes a segfault when persisting 0-length arrays. As such,
-    # we add a dummy pad of length 1 to 0-length dims.
+    # We add a dummy pad of length 1 to 0-length dims.
     max_len = max(1, functools.reduce(max, (x.shape[pad_axis] for x in data)))
+
     padded_data = []
-
     for x in data:
-        # MxNet lacks the functionality to pad n-D arrays consistently.
-        # We fall back to numpy if x is an mx.nd.NDArray.
-        if is_mx:
-            x = x.asnumpy()
-
         pad_size = max_len - x.shape[pad_axis]
         pad_lengths = [(0, 0)] * x.ndim
         pad_lengths[pad_axis] = (0, pad_size)
-        x_padded = np.pad(x, mode="constant", pad_width=pad_lengths)
-
-        padded_data.append(x_padded if not is_mx else mx.nd.array(x_padded))
+        x_padded = (
+            np.pad(x, mode="constant", pad_width=pad_lengths)
+            if isinstance(x, np.ndarray)
+            else _nd_pad_array(x, max_length=max_len)
+        )
+        padded_data.append(x_padded)
 
     return padded_data
 

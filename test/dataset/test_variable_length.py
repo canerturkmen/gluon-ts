@@ -26,7 +26,7 @@ from gluonts.dataset.loader import (
     TrainDataLoader,
     InferenceDataLoader,
 )
-from gluonts.dataset.parallelized_loader import batchify, stack
+from gluonts.dataset.parallelized_loader import batchify, stack, _nd_pad_array
 from gluonts.transform import (
     ContinuousTimeInstanceSplitter,
     ContinuousTimeUniformSampler,
@@ -261,3 +261,37 @@ def test_variable_length_stack_zerosize(
     assert stacked.shape[0] == 5
     assert stacked.shape[1] == 1
     assert stacked.shape[2] == 2
+
+
+@pytest.mark.parametrize(
+    "input, length, expected_output",
+    [
+        ([1, 1, 2, 1], 10, [1, 1, 2, 1, 0, 0, 0, 0, 0, 0]),
+        ([3], 1, [3]),
+        ([[1, 2]], 3, [[1, 2], [0, 0], [0, 0]]),
+        ([[1, 2]], 1, [[1, 2]]),
+        ([], 3, [0, 0, 0]),
+    ],
+)
+def test_nd_pad_array(input, length, expected_output):
+    out = _nd_pad_array(mx.nd.array(input), length)
+
+    assert np.allclose(out.asnumpy(), np.array(expected_output))
+
+
+def test_nd_pad_array_edges():
+    try:
+        _nd_pad_array(mx.nd.zeros(shape=(0, 0)), 2)
+    except AssertionError:
+        pass
+
+    try:
+        _nd_pad_array(mx.nd.zeros(shape=(2, 0)), 2)
+    except AssertionError:
+        pass
+
+    out = _nd_pad_array(mx.nd.zeros(shape=(0, 2)), 2)
+    assert out.shape == (2, 2)
+
+    out = _nd_pad_array(mx.nd.zeros(shape=(0, 1)), 3)
+    assert out.shape == (3, 1)
