@@ -177,7 +177,7 @@ class RollingMeanValueImputation(MissingValueImputation):
         cumsum = np.cumsum(adjusted_values_to_causality)
 
         ar_res = (
-            cumsum[self.window_size :] - cumsum[: -self.window_size]
+            cumsum[self.window_size:] - cumsum[: -self.window_size]
         ) / float(self.window_size)
 
         values[mask] = ar_res[mask]
@@ -372,7 +372,7 @@ class AddTimeFeatures(MapTransformation):
         self._update_cache(start, length)
         i0 = self._date_index[start]
         features = (
-            self._full_range_date_features[..., i0 : i0 + length]
+            self._full_range_date_features[..., i0: i0 + length]
             if self.date_features
             else None
         )
@@ -431,5 +431,129 @@ class AddAgeFeature(MapTransformation):
             age = np.arange(length, dtype=self.dtype)
 
         data[self.feature_name] = age.reshape((1, length))
+
+        return data
+
+
+class AddInterDemandPeriodFeature(MapTransformation):
+    """
+    Add Inter-Demand Period to the specified ``output_field``,
+    If ``output_field`` exists, then the feature is stacked on top of it
+
+    If `is_train=True` the feature matrix has the same length as the `target` field.
+    If `is_train=False` the feature matrix has length len(target) + pred_length
+
+    Parameters
+    ----------
+    start_field
+        Field with the start time stamp of the time series
+    target_field
+        Field with the array containing the time series values
+    output_field
+        Field name for result.
+    pred_length
+        Prediction length
+    """
+
+    @validated()
+    def __init__(
+        self, start_field: str, target_field: str, output_field: str, pred_length: int,
+    ) -> None:
+        self.pred_length = pred_length
+        self.start_field = start_field
+        self.target_field = target_field
+        self.output_field = output_field
+        self._min_time_point: pd.Timestamp = None
+        self._max_time_point: pd.Timestamp = None
+        self._full_range_date_features: np.ndarray = None
+        self._date_index: pd.DatetimeIndex = None
+
+    def _update_cache(self, start: pd.Timestamp, length: int) -> None:
+        end = shift_timestamp(start, length)
+        if self._min_time_point is not None:
+            if self._min_time_point <= start and end <= self._max_time_point:
+                return
+        if self._min_time_point is None:
+            self._min_time_point = start
+            self._max_time_point = end
+        self._min_time_point = min(shift_timestamp(start, -50), self._min_time_point)
+        self._max_time_point = max(shift_timestamp(end, 50), self._max_time_point)
+        self.full_date_range = pd.date_range(
+            self._min_time_point, self._max_time_point, freq=start.freq
+        )
+        self._date_index = pd.Series(
+            index=self.full_date_range, data=np.arange(len(self.full_date_range)),
+        )
+
+    def map_transform(self, data: DataEntry, is_train: bool) -> DataEntry:
+        start = data[self.start_field]
+        length = target_transformation_length(
+            data[self.target_field], self.pred_length, is_train=is_train
+        )
+        self._update_cache(start, length)
+        i0 = self._date_index[start]
+        date_idx = self._date_index.iloc[i0: i0 + length].index
+        # When is_train is false, date_idx has len of target_len + prediction_len
+        # which is useful in time feature generation, but we only need target length
+        date_idx = date_idx[: len(data[self.target_field])]
+        feature = pd.Series(np.ones(len(date_idx)) * np.nan, index=date_idx)
+        mask = data[self.target_field] > 0
+        feature.loc[mask] = feature.loc[mask].index
+        # filling in nan in first row with the corresponding date
+        # Assumption: If the frame starts with a zero demand, earliest date in frame is taken as a start
+        if pd.isnull(feature[0]):
+            feature[0] = feature.index[0]
+        feature = feature.ffill().to_frame()
+        feature["diff"] = (feature.index - feature.iloc[:, 0]) / pd.Timedelta(
+            1, feature.index.freqstr
+        )
+        feature["diff"] = feature["diff"].shift(1).round() + 1
+        feature["diff"] = feature["diff"].fillna(method="bfill")
+        feature = feature["diff"].values
+        if self.output_field in data.keys():
+            data[self.output_field] = np.vstack([data[self.output_field], feature])
+        else:
+            data[self.output_field] = feature
+        return data
+
+
+class DropZeroTarget(SimpleTransformation):
+    """
+    Primarily used for Deep Renewal Network which is trained
+    on Non Zero Targets and Inter Demand Interval
+    Drops the targets that are zero
+
+    Parameters
+    ----------
+    output_field
+        Field name to use for the output
+    input_fields
+        Fields to stack together
+    pred_length
+        Prediction length
+    """
+
+    @validated()
+    def __init__(
+        self, input_fields: List[str], target_field: str, pred_length: int
+    ) -> None:
+        self.input_fields = input_fields
+        self.target_field = target_field
+        self.pred_length = pred_length
+
+    def transform(self, data: DataEntry) -> DataEntry:
+
+        mask = data[self.target_field][0, :] > 0
+        data[self.target_field] = data[self.target_field][:, mask]
+        # Adding Trues for the prediction length. Useful while prediction
+        mask = np.append(mask, [True] * self.pred_length)
+        for field in self.input_fields:
+            _mask = mask[: data[field].shape[-1]]
+            if data[field].ndim == 1:
+                data[field] = data[field][_mask]
+            elif data[field].ndim == 2:
+                data[field] = data[field][:, _mask]
+            else:
+                raise NotImplementedError("ndim for {} should be atmost 2")
 
         return data
