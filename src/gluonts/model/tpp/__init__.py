@@ -13,9 +13,13 @@
 
 from .forecast import PointProcessSampleForecast
 from .predictor import PointProcessGluonPredictor
-from .rmtpp import RMTPPEstimator
+from .deeptpp import DeepTPPEstimator
 
-__all__ = ["PointProcessGluonPredictor", "PointProcessSampleForecast", "RMTPPEstimator"]
+__all__ = [
+    "PointProcessGluonPredictor",
+    "PointProcessSampleForecast",
+    "DeepTPPEstimator",
+]
 
 
 # fix Sphinx issues, see https://bit.ly/2K2eptM
