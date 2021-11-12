@@ -1,0 +1,1 @@
+{"time_granularity": "1M", "target": {"name": "target"}, "feat_static_cat": [{"name": "feat_static_cat_000", "cardinality": 5000}], "feat_static_real": [], "feat_dynamic_cat": [], "feat_dynamic_real": []}
