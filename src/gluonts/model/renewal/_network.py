@@ -301,12 +301,15 @@ class DeepRenewalPredictionNetwork(DeepRenewalNetwork):
                     interval_sample = F.where(
                         interval_sample > repeated_time_remaining,
                         interval_sample,
-                        dist_interval.sample() + 1,
+                        dist_interval.sample(),
                     )
-                interval_sample = F.where(
-                    interval_sample == 0,
-                    repeated_time_remaining + 1,
-                    interval_sample,
+                interval_sample = (
+                    F.where(
+                        interval_sample <= repeated_time_remaining,
+                        repeated_time_remaining,
+                        interval_sample,
+                    )
+                    + 1
                 )
             else:
                 interval_sample = dist_interval.sample() + 1
